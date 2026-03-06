@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 
 const VAT = 0.22;
 const ITAX = 0.25;
-const CASH_K = 0.86;
+const CASH_K = 0.80;
 const CREDIT_RATE = 0.25;
 
 const initItems = [
@@ -618,7 +618,7 @@ export default function App() {
                   {l:"Позиции б/НДС",            v:fmt(calc.budgetExVAT),    vc:S.muted,    bg:"transparent",       bd:"transparent"},
                   {l:`АКК агентства ${akkPct}%`,  v:`+ ${fmt(calc.akkAmt)}`, vc:S.blue,     bg:S.blueLt,            bd:S.blueMid},
                   {l:"Бюджет + АКК б/НДС",        v:fmt(calc.budgetPlusAkk), vc:S.text,     bg:"transparent",       bd:"transparent"},
-                  {l:`× ${(1+VAT).toFixed(2)} НДС → клиенту`, v:fmt(calc.budgetWithVAT), vc:S.greenDk, bg:S.greenLt, bd:S.greenMid, bold:true},
+                  {l:"Общий бюджет с НДС", v:fmt(calc.budgetWithVAT), vc:S.greenDk, bg:S.greenLt, bd:S.greenMid, bold:true},
                 ].map((row,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 13px",borderRadius:9,background:row.bg,border:`1px solid ${row.bd}`}}>
                     <div style={{fontWeight:row.bold?800:600,fontSize:12,color:row.bold?S.greenDk:S.muted}}>{row.l}</div>
@@ -649,7 +649,7 @@ export default function App() {
                   {l:`НДС к уплате (${(VAT*100).toFixed(0)}%)`,       v:fmt(calc.vatToPay),   c:S.red,   dir:"▼"},
                   {l:`Налог на прибыль (${(ITAX*100).toFixed(0)}%)`,  v:fmt(calc.incomeTax),  c:S.red,   dir:"▼"},
                   {l:"Прибыль компании",                              v:fmt(calc.profit),     c:S.green, dir:"▲"},
-                  {l:`КЭШ (×${CASH_K})`,                              v:fmt(calc.cashOut),    c:S.blue,  dir:""},
+                  {l:"Реальных денег",                              v:fmt(calc.cashOut),    c:S.blue,  dir:""},
                   {l:`Кредитование ${creditM} мес.`,                  v:fmt(calc.creditCost), c:S.red,   dir:"▼"},
                   {l:"Доход итого",                                   v:fmt(calc.income),     c:S.green, dir:"▲", bold:true},
                 ].map((row,i)=>(
