@@ -1,4 +1,6 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+// Import xlsx library for Excel export/import. This must be installed via package.json dependencies.
+import * as XLSX from 'xlsx';
 
 const VAT = 0.22;
 const ITAX = 0.25;
@@ -12,9 +14,9 @@ const initItems = [
 ];
 
 const initSellItems = [
-  { id: 1, name: "Поднос 430×230 мм", qty: 30, sellPrice: 9270, payType: "vat" },
-  { id: 2, name: "Сигнальник",         qty: 1,  sellPrice: 28000, payType: "vat" },
-  { id: 3, name: "Доставка",           qty: 4,  sellPrice: 2000,  payType: "cash" },
+  { id: 1, name: "Поднос 430×230 мм", qty: 30, sellPrice: 9270, payType: "vat", manual: false },
+  { id: 2, name: "Сигнальник",         qty: 1,  sellPrice: 28000, payType: "vat", manual: false },
+  { id: 3, name: "Доставка",           qty: 4,  sellPrice: 2000,  payType: "cash", manual: false },
 ];
 
 // Buyer palette
@@ -48,8 +50,23 @@ export default function App() {
   const [p2, setP2]             = useState(40);
   const fileRef                 = useRef();
   const sellFileRef             = useRef();
+  const allFileRef              = useRef();
   const P = tab === "buy" ? B : S;
   const p3 = Math.max(0, 100 - p1 - p2);
+
+  // Propagate names from purchase items to sell items automatically if not manually edited
+  useEffect(() => {
+    setSellItems((prev) => {
+      // copy array to avoid mutating state directly
+      const updated = prev.map((s, idx) => {
+        if (items[idx] && !s.manual) {
+          return { ...s, name: items[idx].name };
+        }
+        return s;
+      });
+      return updated;
+    });
+  }, [items]);
 
   /* ── buy calc ── */
   const calc = useMemo(() => {
@@ -84,9 +101,18 @@ export default function App() {
   const delItem = (id) => setItems(p=>p.filter(i=>i.id!==id));
   const upd = (id,f,v) => setItems(p=>p.map(i=>i.id!==id?i:{...i,[f]:f==="name"||f==="payType"?v:(parseFloat(v)||0)}));
 
-  const addSell = () => setSellItems(p=>[...p,{id:uid(),name:"",qty:1,sellPrice:0,payType:"vat"}]);
+  const addSell = () => setSellItems(p=>[...p,{id:uid(),name:"",qty:1,sellPrice:0,payType:"vat", manual:false}]);
   const delSell = (id) => setSellItems(p=>p.filter(i=>i.id!==id));
-  const updSell = (id,f,v) => setSellItems(p=>p.map(i=>i.id!==id?i:{...i,[f]:f==="name"||f==="payType"?v:(parseFloat(v)||0)}));
+  const updSell = (id,f,v) => setSellItems(p=>p.map(i=>{
+    if(i.id!==id) return i;
+    const newVal = f==="name"||f==="payType"?v:(parseFloat(v)||0);
+    return {
+      ...i,
+      [f]: newVal,
+      // mark as manual if user edited name manually
+      manual: f === "name" ? true : i.manual
+    };
+  }));
 
   /* ── csv export ── */
   const exportBuy = () => {
@@ -128,6 +154,155 @@ export default function App() {
       }));
     };
     r.readAsText(f,"UTF-8"); e.target.value="";
+  };
+
+  /* ── excel export/import ── */
+  const exportAll = () => {
+    // Create a new workbook
+    const wb = XLSX.utils.book_new();
+    // ----- Buy sheet -----
+    const buyRows = [];
+    // Header
+    buyRows.push(["Наименование","Цена","Кол-во","Тип оплаты","Итого"]);
+    // Data rows with formulas for total
+    items.forEach((item, idx) => {
+      const rowIndex = buyRows.length + 1; // Excel row index (1-indexed)
+      buyRows.push([
+        item.name,
+        item.price,
+        item.qty,
+        item.payType,
+        { t: 'n', f: `B${rowIndex}*C${rowIndex}` }
+      ]);
+    });
+    const wsBuy = XLSX.utils.aoa_to_sheet(buyRows);
+    XLSX.utils.book_append_sheet(wb, wsBuy, 'Buy Items');
+
+    // ----- Sell sheet -----
+    const sellRows = [];
+    sellRows.push(["Наименование","Кол-во","Цена б/НДС","Итого"]);
+    sellItems.forEach((item, idx) => {
+      const rowIndex = sellRows.length + 1;
+      sellRows.push([
+        item.name,
+        item.qty,
+        item.sellPrice,
+        { t: 'n', f: `B${rowIndex}*C${rowIndex}` }
+      ]);
+    });
+    const wsSell = XLSX.utils.aoa_to_sheet(sellRows);
+    XLSX.utils.book_append_sheet(wb, wsSell, 'Sell Items');
+
+    // ----- Summary sheet -----
+    const bStart = 2;
+    const bEnd = items.length + 1;
+    const sStart = 2;
+    const sEnd = sellItems.length + 1;
+    const summaryRows = [];
+    // Header
+    summaryRows.push(["Метрика","Значение","Формула"]);
+    // VAT constant (row2)
+    summaryRows.push(["VAT", VAT, null]);
+    // AKK percentage (row3)
+    summaryRows.push(["AKK %", akkPct, null]);
+    // Total purchase cost (row4)
+    summaryRows.push(["Total Purchase", { f: `SUM('Buy Items'!E${bStart}:E${bEnd})` }, `=SUM('Buy Items'!E${bStart}:E${bEnd})`]);
+    // Budget ex VAT (row5)
+    summaryRows.push(["Budget Ex VAT", { f: `SUM('Sell Items'!D${sStart}:D${sEnd})` }, `=SUM('Sell Items'!D${sStart}:D${sEnd})`]);
+    // Akk amount (row6): B5 * B3 / 100 (Budget ex VAT * AKK % / 100)
+    summaryRows.push(["Akk Amount", { f: `B5*B3/100` }, `=B5*B3/100`]);
+    // Budget+Akk Ex VAT (row7): B5 + B6
+    summaryRows.push(["Budget+AKK Ex VAT", { f: `B5+B6` }, `=B5+B6`]);
+    // Budget+Akk Inc VAT (row8): B7*(1+B2)
+    summaryRows.push(["Budget+AKK Inc VAT", { f: `B7*(1+B2)` }, `=B7*(1+B2)`]);
+    // Credit months (row9)
+    summaryRows.push(["Credit Months", creditM, null]);
+    // Credit rate (row10)
+    summaryRows.push(["Credit Rate", CREDIT_RATE, null]);
+    // Credit cost (row11): B4 * B10 / 12 * B9
+    summaryRows.push(["Credit Cost", { f: `B4*B10/12*B9` }, `=B4*B10/12*B9`]);
+    // Payment1 percentage (row12)
+    summaryRows.push(["Payment1 %", p1, null]);
+    // Payment2 percentage (row13)
+    summaryRows.push(["Payment2 %", p2, null]);
+    // Payment3 percentage (row14): 100 - B12 - B13
+    summaryRows.push(["Payment3 %", { f: `100-B12-B13` }, `=100-B12-B13`]);
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    // Write workbook and trigger download
+    const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'smeta.xlsx';
+    a.click();
+  };
+
+  const importAll = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const data = new Uint8Array(ev.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      // Parse Buy Items
+      const wsBuy = wb.Sheets['Buy Items'];
+      if (wsBuy) {
+        const arr = XLSX.utils.sheet_to_json(wsBuy, { header: 1, raw: true });
+        // Skip header row and empty rows
+        const newItems = arr.slice(1).filter(row => row && row.length >= 4 && row[0] !== undefined).map((row, idx) => {
+          return {
+            id: uid() + idx,
+            name: row[0] || "",
+            price: parseFloat(row[1]) || 0,
+            qty: parseFloat(row[2]) || 1,
+            payType: ["cash","usn","vat"].includes(row[3]) ? row[3] : "vat"
+          };
+        });
+        if (newItems.length > 0) setItems(newItems);
+      }
+      // Parse Sell Items
+      const wsSell = wb.Sheets['Sell Items'];
+      if (wsSell) {
+        const arr = XLSX.utils.sheet_to_json(wsSell, { header: 1, raw: true });
+        const newSell = arr.slice(1).filter(row => row && row.length >= 3 && row[0] !== undefined).map((row, idx) => {
+          return {
+            id: uid() + idx,
+            name: row[0] || "",
+            qty: parseFloat(row[1]) || 1,
+            sellPrice: parseFloat(row[2]) || 0,
+            payType: "vat",
+            manual: false
+          };
+        });
+        if (newSell.length > 0) setSellItems(newSell);
+      }
+      // Parse Summary sheet (optional) to update settings
+      const wsSum = wb.Sheets['Summary'];
+      if (wsSum) {
+        // Extract values by cell address (B3 for AKK %, B9 for credit months, B12 and B13 for payments)
+        try {
+          const akkCell = wsSum['B3'];
+          const creditMonthsCell = wsSum['B9'];
+          const p1Cell = wsSum['B12'];
+          const p2Cell = wsSum['B13'];
+          const newAkk = akkCell && akkCell.v != null ? parseFloat(akkCell.v) : akkPct;
+          const newCreditM = creditMonthsCell && creditMonthsCell.v != null ? parseFloat(creditMonthsCell.v) : creditM;
+          const newP1 = p1Cell && p1Cell.v != null ? parseFloat(p1Cell.v) : p1;
+          const newP2 = p2Cell && p2Cell.v != null ? parseFloat(p2Cell.v) : p2;
+          if (!isNaN(newAkk)) setAkkPct(newAkk);
+          if (!isNaN(newCreditM)) setCreditM(newCreditM);
+          if (!isNaN(newP1)) setP1(newP1);
+          if (!isNaN(newP2)) setP2(newP2);
+        } catch(err) {
+          console.error(err);
+        }
+      }
+    };
+    reader.readAsArrayBuffer(f);
+    e.target.value = "";
   };
 
   const payColors = {
@@ -197,6 +372,19 @@ export default function App() {
       </header>
 
       <main style={{maxWidth:1100,margin:"0 auto",padding:"22px 26px",display:"flex",flexDirection:"column",gap:14}}>
+
+        {/* ── Global Export/Import Buttons ── */}
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+          <button className="btn" onClick={exportAll}
+            style={{background:P.blueLt,color:P.blue,border:`1.5px solid ${P.blueMid}`}}>
+            Выгрузить Excel
+          </button>
+          <button className="btn" onClick={()=>allFileRef.current && allFileRef.current.click()}
+            style={{background:P.greenLt,color:P.green,border:`1.5px solid ${P.greenMid}`}}>
+            Загрузить Excel
+          </button>
+          <input ref={allFileRef} type="file" accept=".xlsx,.xls" onChange={importAll} style={{display:"none"}}/>
+        </div>
 
         {/* ═══════════════════ ЗАКУПКА ═══════════════════ */}
         {tab==="buy" && <>
